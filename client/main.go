@@ -63,7 +63,7 @@ func main() {
 		panic(err)
 	}
 
-	fmt.Println("loaded listening on :9000")
+	fmt.Println("\x1b[32mConnected to crol.bar:9000\x1b[m\n")
 
 	ctx, _ := malgo.InitContext(nil, malgo.ContextConfig{}, nil)
 	defer ctx.Free()
@@ -119,7 +119,7 @@ func main() {
 		for {
 			n, err := conn.Read(buf)
 
-			fmt.Println("read", n)
+			// fmt.Println("read", n)
 
 			if err != nil {
 				panic(err)
@@ -165,7 +165,7 @@ func PrintDevices(ctx *malgo.AllocatedContext) error {
 		return err
 	}
 
-	fmt.Println("select mic")
+	fmt.Println("\x1b[34m= Select mic =\x1b[m")
 	for i, d := range captureDevices {
 		fmt.Println(i, d.Name())
 	}
@@ -191,7 +191,7 @@ func PrintDevices(ctx *malgo.AllocatedContext) error {
 
 	fmt.Println()
 
-	fmt.Println("select speaker")
+	fmt.Println("\x1b[34m= Select Speaker =\x1b[m")
 	for i, d := range playbackDevices {
 		fmt.Println(i, d.Name())
 	}
@@ -212,8 +212,8 @@ func PrintDevices(ctx *malgo.AllocatedContext) error {
 
 	fmt.Println()
 
-	fmt.Printf("using mic %s\n", captureDevices[captureDevIdx].Name())
-	fmt.Printf("using speaker %s\n", playbackDevices[playbackDevIdx].Name())
+	fmt.Printf("\x1b[33mUsing mic %s\x1b[m\n", captureDevices[captureDevIdx].Name())
+	fmt.Printf("\x1b[33mUsing speaker %s\x1b[m\n", playbackDevices[playbackDevIdx].Name())
 
 	return nil
 }
