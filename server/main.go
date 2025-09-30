@@ -6,17 +6,22 @@ import (
 	"sync"
 )
 
+type Client struct {
+	conn net.Conn
+	ch   chan []byte
+}
+
 var (
-	clients = make(map[net.Conn]bool)
+	clients = make(map[Client]bool)
 	mu      sync.Mutex
 )
 
-func handleClient(conn net.Conn) {
+func handleClient(c *Client) {
 	defer func() {
 		mu.Lock()
-		delete(clients, conn)
+		delete(clients, *c)
 		mu.Unlock()
-		conn.Close()
+		c.conn.Close()
 	}()
 
 	// scanner := bufio.NewScanner(conn)
@@ -31,22 +36,22 @@ func handleClient(conn net.Conn) {
 	// 	mu.Unlock()
 	// }
 
-	buf := make([]byte, 2048)
+	buf := make([]byte, 4096)
 	for {
-		n, err := conn.Read(buf)
+		n, err := c.conn.Read(buf)
 		if err != nil {
 			return
 		}
 		mu.Lock()
-		for c := range clients {
+		for other := range clients {
 			// don't playback
-			if c == conn {
+			if other.conn == c.conn {
 				continue
 			}
 
-			c.Write(buf[:n])
-
-			fmt.Println("wrote n: ", n)
+			chunk := make([]byte, n)
+			copy(chunk, buf[:n])
+			other.ch <- chunk
 		}
 		mu.Unlock()
 	}
@@ -65,8 +70,32 @@ func main() {
 			continue
 		}
 		mu.Lock()
-		clients[conn] = true
+
+		c := Client{
+			conn: conn,
+			ch:   make(chan []byte),
+		}
+
+		clients[c] = true
 		mu.Unlock()
-		go handleClient(conn)
+		go writeLoop(&c)
+		go handleClient(&c)
+	}
+}
+
+func writeLoop(c *Client) {
+	for {
+		select {
+		case data, ok := <-c.ch:
+			if !ok {
+				c.ch = nil
+				continue
+			}
+			c.conn.Write(data)
+		}
+
+		if c.ch == nil {
+			break
+		}
 	}
 }

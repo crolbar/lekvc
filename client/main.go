@@ -7,13 +7,14 @@ import (
 	"math"
 	"net"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 
 	"github.com/gen2brain/malgo"
 )
 
-const bufferFrames = 4800 // 100ms buffer
+const bufferFrames = 0.4 * 48000 * 2
 
 var (
 	conn net.Conn
@@ -57,11 +58,16 @@ func playbackDevCb(pOutputSample, pInputSamples []byte, framecount uint32) {
 }
 
 func main() {
+	if runtime.GOOS == "windows" {
+		enableANSI()
+	}
+
 	var err error
 	conn, err = net.Dial("tcp", "crol.bar:9000")
 	if err != nil {
 		panic(err)
 	}
+	fmt.Println("size", bufferFrames)
 
 	fmt.Println("\x1b[32mConnected to crol.bar:9000\x1b[m\n")
 
