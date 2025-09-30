@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/gen2brain/malgo"
 )
@@ -31,7 +32,8 @@ var (
 	channels   = uint32(1)
 	sampleRate = uint32(48000)
 
-	ring = NewRingBuffer(bufferFrames * int(channels))
+	ring   = NewRingBuffer(bufferFrames * int(channels))
+	ringMu sync.Mutex
 )
 
 func captureDevCb(pOutputSample, pInputSamples []byte, framecount uint32) {
@@ -43,7 +45,10 @@ func captureDevCb(pOutputSample, pInputSamples []byte, framecount uint32) {
 
 func playbackDevCb(pOutputSample, pInputSamples []byte, framecount uint32) {
 	samples := make([]float32, framecount*uint32(channels))
+
+	ringMu.Lock()
 	n := ring.Read(samples)
+	ringMu.Unlock()
 
 	for i := n; i < len(samples); i++ {
 		samples[i] = 0
@@ -57,6 +62,38 @@ func playbackDevCb(pOutputSample, pInputSamples []byte, framecount uint32) {
 	}
 }
 
+func msgReader() {
+	var recvBuf []byte
+
+	var buf []byte = make([]byte, 4800)
+
+	for {
+		n, err := conn.Read(buf)
+
+		if err != nil {
+			panic(err)
+		}
+
+		if n == 0 {
+			continue
+		}
+
+		recvBuf = append(recvBuf, buf[:n]...)
+
+		sampleCount := len(recvBuf) / 4
+
+		if sampleCount > 0 {
+			samples := bytesToFloat32(recvBuf[:sampleCount*4])
+
+			ringMu.Lock()
+			ring.Write(samples)
+			ringMu.Unlock()
+
+			recvBuf = recvBuf[sampleCount*4:]
+		}
+	}
+}
+
 func main() {
 	if runtime.GOOS == "windows" {
 		enableANSI()
@@ -67,7 +104,6 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	fmt.Println("size", bufferFrames)
 
 	fmt.Println("\x1b[32mConnected to crol.bar:9000\x1b[m\n")
 
@@ -118,35 +154,7 @@ func main() {
 	captureDev.Start()
 	playbackDev.Start()
 
-	var recvBuf []byte
-	go func() {
-		var buf []byte = make([]byte, 4800)
-
-		for {
-			n, err := conn.Read(buf)
-
-			// fmt.Println("read", n)
-
-			if err != nil {
-				panic(err)
-			}
-
-			if n == 0 {
-				continue
-			}
-
-			recvBuf = append(recvBuf, buf[:n]...)
-
-			sampleCount := len(recvBuf) / 4
-
-			if sampleCount > 0 {
-				samples := bytesToFloat32(buf[:sampleCount*4])
-				ring.Write(samples)
-
-				recvBuf = recvBuf[sampleCount*4:]
-			}
-		}
-	}()
+	go msgReader()
 
 	select {}
 
