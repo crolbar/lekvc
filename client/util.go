@@ -88,3 +88,9 @@ func abs(x float32) float32 {
 	}
 	return x
 }
+
+func applyLowPass(samples []float32) {
+	for i := 1; i < len(samples)-1; i++ {
+		samples[i] = (samples[i-1] + samples[i] + samples[i+1]) / 3.0
+	}
+}

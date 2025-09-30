@@ -13,6 +13,8 @@ import (
 	"sync"
 
 	"github.com/gen2brain/malgo"
+
+	p "github.com/crolbar/lekvc/lekvcs/protocol"
 )
 
 const bufferFrames = 0.1 * 48000 * 2
@@ -65,14 +67,27 @@ func playbackDevCb(pOutputSample, pInputSamples []byte, framecount uint32) {
 	}
 }
 
-func applyLowPass(samples []float32) {
-	for i := 1; i < len(samples)-1; i++ {
-		samples[i] = (samples[i-1] + samples[i] + samples[i+1]) / 3.0
+func audioHandle(audioBuf []byte, buf []byte, n int) {
+	audioBuf = append(audioBuf, buf[:n]...)
+
+	sampleCount := len(audioBuf) / 4
+
+	if sampleCount <= 0 {
+		return
 	}
+
+	samples := bytesToFloat32(audioBuf[:sampleCount*4])
+
+	ringMu.Lock()
+	ring.Write(samples)
+	ringMu.Unlock()
+
+	audioBuf = audioBuf[sampleCount*4:]
+
 }
 
 func msgReader() {
-	var recvBuf []byte
+	var audioBuf []byte
 
 	var buf []byte = make([]byte, 4800)
 
@@ -87,31 +102,18 @@ func msgReader() {
 			continue
 		}
 
-		recvBuf = append(recvBuf, buf[:n]...)
-
-		sampleCount := len(recvBuf) / 4
-
-		if sampleCount <= 0 {
-			continue
-		}
-
-		samples := bytesToFloat32(recvBuf[:sampleCount*4])
-
-		ringMu.Lock()
-		ring.Write(samples)
-		ringMu.Unlock()
-
-		recvBuf = recvBuf[sampleCount*4:]
+		audioHandle(audioBuf, buf, n)
 	}
 }
 
 func main() {
+	var err error
+
 	if runtime.GOOS == "windows" {
 		enableANSI()
 	}
 
-	var err error
-	conn, err = net.Dial("tcp", "crol.bar:9000")
+	conn, err = net.Dial("tcp", "localhost:9000")
 	if err != nil {
 		panic(err)
 	}
@@ -120,6 +122,19 @@ func main() {
 
 	ctx, _ := malgo.InitContext(nil, malgo.ContextConfig{}, nil)
 	defer ctx.Free()
+
+	data, err := p.EncodeMsg(p.Msg{
+		Type: p.InitClient,
+		ID:   0,
+
+		PayloadSize:    4,
+		Payload:        []byte("test"),
+		ClientNameSize: 5,
+		ClientName:     "jhony",
+	})
+	conn.Write(data)
+
+	return
 
 	err = PrintDevices(ctx)
 	if err != nil {
