@@ -15,7 +15,7 @@ import (
 	"github.com/gen2brain/malgo"
 )
 
-const bufferFrames = 0.4 * 48000 * 2
+const bufferFrames = 0.1 * 48000 * 2
 
 var (
 	conn net.Conn
@@ -62,6 +62,12 @@ func playbackDevCb(pOutputSample, pInputSamples []byte, framecount uint32) {
 	}
 }
 
+func applyLowPass(samples []float32) {
+	for i := 1; i < len(samples)-1; i++ {
+		samples[i] = (samples[i-1] + samples[i] + samples[i+1]) / 3.0
+	}
+}
+
 func msgReader() {
 	var recvBuf []byte
 
@@ -82,15 +88,20 @@ func msgReader() {
 
 		sampleCount := len(recvBuf) / 4
 
-		if sampleCount > 0 {
-			samples := bytesToFloat32(recvBuf[:sampleCount*4])
-
-			ringMu.Lock()
-			ring.Write(samples)
-			ringMu.Unlock()
-
-			recvBuf = recvBuf[sampleCount*4:]
+		if sampleCount <= 0 {
+			continue
 		}
+
+
+		samples := bytesToFloat32(recvBuf[:sampleCount*4])
+
+		applyLowPass(samples)
+
+		ringMu.Lock()
+		ring.Write(samples)
+		ringMu.Unlock()
+
+		recvBuf = recvBuf[sampleCount*4:]
 	}
 }
 

@@ -42,16 +42,24 @@ func handleClient(c *Client) {
 		if err != nil {
 			return
 		}
+		
+		// Forward packet to all other clients
 		mu.Lock()
 		for other := range clients {
-			// don't playback
+			// don't playback to sender
 			if other.conn == c.conn {
 				continue
 			}
 
+			// Non-blocking send to prevent blocking on slow clients
 			chunk := make([]byte, n)
 			copy(chunk, buf[:n])
-			other.ch <- chunk
+			
+			select {
+			case other.ch <- chunk:
+			default:
+				// Drop packet if client buffer is full
+			}
 		}
 		mu.Unlock()
 	}
@@ -73,7 +81,7 @@ func main() {
 
 		c := Client{
 			conn: conn,
-			ch:   make(chan []byte),
+			ch:   make(chan []byte, 50), // Increased buffer size
 		}
 
 		clients[c] = true
