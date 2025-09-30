@@ -8,10 +8,11 @@ import (
 )
 
 func main() {
-	conn, err := net.Dial("tcp", "crol.bar")
+	conn, err := net.Dial("tcp", "crol.bar:9000")
 	if err != nil {
 		panic(err)
 	}
+	fmt.Println("loaded listening on :9000")
 
 	go func() {
 		scanner := bufio.NewScanner(conn)

@@ -1,0 +1,57 @@
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [linux, windows]
+        goarch: [amd64]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.24.4'
+
+      - name: Build
+        run: |
+           GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -C client -o lekvc-${{ matrix.goos }}${{ matrix.goos == 'windows' && '.exe' || '' }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lekvc-${{ matrix.goos }}${{ matrix.goos == 'windows' && '.exe' || '' }}
+          path: ./client/lekvc-${{ matrix.goos }}${{ matrix.goos == 'windows' && '.exe' || '' }}
+    
+  release:
+    needs: [ build ]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Archive
+        run: |
+          cd artifacts
+          for f in */*; do
+            base=$(basename "$f")
+            dir=$(basename "$(dirname "$f")")
+            tar -czvf "${dir}.tar.gz" -C "$(dirname "$f")" "$base"
+          done
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.PAT }}

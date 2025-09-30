@@ -34,7 +34,7 @@ func handleClient(conn net.Conn) {
 }
 
 func main() {
-	ln, err := net.Listen("tcp", ":9000")
+	ln, err := net.Listen("tcp", "0.0.0.0:9000")
 	if err != nil {
 		panic(err)
 	}
