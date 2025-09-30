@@ -6,11 +6,11 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
     strategy:
       matrix:
-        goos: [linux, windows]
+        os: [ubuntu-latest, windows-latest]
         goarch: [amd64]
+    runs-on: ${{ matrix.os }}
 
     steps:
       - name: Checkout
@@ -23,13 +23,13 @@ jobs:
 
       - name: Build
         run: |
-           GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -C client -o lekvc-${{ matrix.goos }}${{ matrix.goos == 'windows' && '.exe' || '' }}
+           go build -C client -o lekvc-${{ matrix.os }}${{ matrix.os == 'windows-latest' && '.exe' || '' }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: lekvc-${{ matrix.goos }}${{ matrix.goos == 'windows' && '.exe' || '' }}
-          path: ./client/lekvc-${{ matrix.goos }}${{ matrix.goos == 'windows' && '.exe' || '' }}
+          name: lekvc-${{ matrix.os }}${{ matrix.os == 'windows-latest' && '.exe' || '' }}
+          path: ./client/lekvc-${{ matrix.os }}${{ matrix.os == 'windows-latest' && '.exe' || '' }}
     
   release:
     needs: [ build ]
