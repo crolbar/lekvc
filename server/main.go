@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"net"
 	"sync"
@@ -20,14 +19,34 @@ func handleClient(conn net.Conn) {
 		conn.Close()
 	}()
 
-	scanner := bufio.NewScanner(conn)
-	for scanner.Scan() {
-		msg := scanner.Text()
+	// scanner := bufio.NewScanner(conn)
+	// for scanner.Scan() {
+	// 	msg := scanner.Text()
+	// 	mu.Lock()
+	// 	for c := range clients {
+	// 		if c != conn {
+	// 			fmt.Fprintln(c, msg)
+	// 		}
+	// 	}
+	// 	mu.Unlock()
+	// }
+
+	buf := make([]byte, 2048)
+	for {
+		n, err := conn.Read(buf)
+		if err != nil {
+			return
+		}
 		mu.Lock()
 		for c := range clients {
-			if c != conn {
-				fmt.Fprintln(c, msg)
+			// don't playback
+			if c == conn {
+				continue
 			}
+
+			c.Write(buf[:n])
+
+			fmt.Println("wrote n: ", n)
 		}
 		mu.Unlock()
 	}

@@ -1,0 +1,57 @@
+package main
+
+import (
+	"encoding/binary"
+	"math"
+)
+
+type RingBuffer struct {
+	buf   []float32
+	size  int
+	read  int
+	write int
+}
+
+func NewRingBuffer(size int) *RingBuffer {
+	return &RingBuffer{
+		buf:  make([]float32, size),
+		size: size,
+	}
+}
+
+func (r *RingBuffer) Write(samples []float32) int {
+	n := 0
+	for _, s := range samples {
+		next := (r.write + 1) % r.size
+		if next == r.read {
+			break // buffer full
+		}
+		r.buf[r.write] = s
+		r.write = next
+		n++
+	}
+	return n
+}
+
+func (r *RingBuffer) Read(out []float32) int {
+	n := 0
+	for i := range out {
+		if r.read == r.write {
+			break // buffer empty
+		}
+		out[i] = r.buf[r.read]
+		r.read = (r.read + 1) % r.size
+		n++
+	}
+	return n
+}
+
+func bytesToFloat32(b []byte, size int) []float32 {
+	out := make([]float32, size)
+
+	for i := range out {
+		out[i] = math.Float32frombits(binary.LittleEndian.Uint32(b[i*4:]))
+	}
+
+	return out
+}
