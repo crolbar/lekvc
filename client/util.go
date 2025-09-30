@@ -56,3 +56,35 @@ func bytesToFloat32(b []byte) []float32 {
 
 	return out
 }
+
+func float32ToBytes(f []float32) []byte {
+	out := make([]byte, len(f)*4)
+	for i, v := range f {
+		binary.LittleEndian.PutUint32(out[i*4:], math.Float32bits(v))
+	}
+	return out
+}
+
+func noiseGate(samples []float32, thresholdDB float64) []float32 {
+	threshold := float32(1.0 * pow10(thresholdDB/20.0)) // convert dB to linear
+	output := make([]float32, len(samples))
+	for i, s := range samples {
+		if abs(s) < threshold {
+			output[i] = 0
+		} else {
+			output[i] = s
+		}
+	}
+	return output
+}
+
+func pow10(x float64) float64 {
+	return math.Pow(10, x)
+}
+
+func abs(x float32) float32 {
+	if x < 0 {
+		return -x
+	}
+	return x
+}

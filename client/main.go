@@ -40,7 +40,10 @@ func captureDevCb(pOutputSample, pInputSamples []byte, framecount uint32) {
 	// size := int(framecount * uint32(channels))
 	// fmt.Println("send: ", size)
 
-	conn.Write(pInputSamples)
+	samples := bytesToFloat32(pInputSamples)
+	clean := noiseGate(samples, -70)
+	applyLowPass(clean)
+	conn.Write(float32ToBytes(clean))
 }
 
 func playbackDevCb(pOutputSample, pInputSamples []byte, framecount uint32) {
@@ -92,10 +95,7 @@ func msgReader() {
 			continue
 		}
 
-
 		samples := bytesToFloat32(recvBuf[:sampleCount*4])
-
-		applyLowPass(samples)
 
 		ringMu.Lock()
 		ring.Write(samples)
