@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -15,6 +16,8 @@ import (
 const bufferFrames = 4800 // 100ms buffer
 
 var (
+	conn net.Conn
+
 	captureDevIdx  = 0
 	playbackDevIdx = 0
 
@@ -31,10 +34,10 @@ var (
 )
 
 func captureDevCb(pOutputSample, pInputSamples []byte, framecount uint32) {
-	size := int(framecount * uint32(channels))
-	samples := bytesToFloat32(pInputSamples, size)
+	// size := int(framecount * uint32(channels))
+	// fmt.Println("send: ", size)
 
-	ring.Write(samples)
+	conn.Write(pInputSamples)
 }
 
 func playbackDevCb(pOutputSample, pInputSamples []byte, framecount uint32) {
@@ -55,10 +58,10 @@ func playbackDevCb(pOutputSample, pInputSamples []byte, framecount uint32) {
 
 func main() {
 	var err error
-	// conn, err := net.Dial("tcp", "localhost:9000")
-	// if err != nil {
-	// 	panic(err)
-	// }
+	conn, err = net.Dial("tcp", "crol.bar:9000")
+	if err != nil {
+		panic(err)
+	}
 
 	fmt.Println("loaded listening on :9000")
 
@@ -109,19 +112,50 @@ func main() {
 	captureDev.Start()
 	playbackDev.Start()
 
+	var recvBuf []byte
+	go func() {
+		var buf []byte = make([]byte, 4800)
+
+		for {
+			n, err := conn.Read(buf)
+
+			fmt.Println("read", n)
+
+			if err != nil {
+				panic(err)
+			}
+
+			if n == 0 {
+				continue
+			}
+
+			recvBuf = append(recvBuf, buf[:n]...)
+
+			sampleCount := len(recvBuf) / 4
+
+			if sampleCount > 0 {
+				samples := bytesToFloat32(buf[:sampleCount*4])
+				ring.Write(samples)
+
+				recvBuf = recvBuf[sampleCount*4:]
+			}
+		}
+	}()
+
 	select {}
 
-	// go func() {
-	// 	scanner := bufio.NewScanner(conn)
-	// 	for scanner.Scan() {
-	// 		fmt.Println(">>", scanner.Text())
-	// 	}
-	// }()
+	// 	go func() {
+	// 		scanner := bufio.NewScanner(conn)
+	// 		for scanner.Scan() {
+	// 			fmt.Println(">>", scanner.Text())
+	// 		}
+	// 	}()
 
 	// scanner := bufio.NewScanner(os.Stdin)
-	// for scanner.Scan() {
-	// 	fmt.Fprintln(conn, scanner.Text())
-	// }
+	//
+	//	for scanner.Scan() {
+	//		fmt.Fprintln(conn, scanner.Text())
+	//	}
 }
 
 func PrintDevices(ctx *malgo.AllocatedContext) error {

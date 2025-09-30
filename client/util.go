@@ -46,7 +46,8 @@ func (r *RingBuffer) Read(out []float32) int {
 	return n
 }
 
-func bytesToFloat32(b []byte, size int) []float32 {
+func bytesToFloat32(b []byte) []float32 {
+	size := len(b) / 4
 	out := make([]float32, size)
 
 	for i := range out {
