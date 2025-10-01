@@ -21,6 +21,12 @@ jobs:
         with:
           go-version: '1.24.4'
 
+      - name: Install speex
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libspeexdsp-dev pkg-config
+
       - name: Build
         run: |
            go build -C client -o lekvc-${{ matrix.os }}${{ matrix.os == 'windows-latest' && '.exe' || '' }}

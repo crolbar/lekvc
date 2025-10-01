@@ -1,7 +1,9 @@
 package speex
 
 /*
-#cgo pkg-config: speexdsp
+#cgo linux pkg-config: speexdsp
+#cgo windows CFLAGS: -I./lib/include
+#cgo windows LDFLAGS: -L./lib -lspeexdsp
 #include <speex/speex_preprocess.h>
 #include <stdlib.h>
 */
