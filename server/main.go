@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"sync"
+	"time"
 
 	p "github.com/crolbar/lekvc/lekvcs/protocol"
 )
@@ -75,7 +76,8 @@ func (c *Client) readLoop() {
 
 	for {
 		msg, err := p.ReadMsg(c.conn)
-		if err == io.EOF {
+		if opErr, ok := err.(*net.OpError); (ok && opErr.Err.Error() == "read: connection reset by peer") ||
+			err == io.EOF {
 			c.notifyClientLeave()
 			break
 		}
@@ -106,7 +108,7 @@ func (c *Client) writeLoop() {
 func (c *Client) notifyClientJoin() {
 	joinMsg := fmt.Sprintf("CLIENT %s(%s) CONNECTED", c.name, c.conn.RemoteAddr().String())
 
-	fmt.Printf("\x1b[34m%s\x1b[m", joinMsg)
+	fmt.Printf("\x1b[34m%s\x1b[m\n", joinMsg)
 
 	c.sendToOthers(p.NewMsgP(
 		p.ClientJoin,
@@ -118,7 +120,7 @@ func (c *Client) notifyClientJoin() {
 func (c *Client) notifyClientLeave() {
 	discMsg := fmt.Sprintf("CLIENT %s(%s) DISCONNECTED", c.name, c.conn.RemoteAddr().String())
 
-	fmt.Printf("\x1b[31m%s\x1b[m", discMsg)
+	fmt.Printf("\x1b[31m%s\x1b[m\n", discMsg)
 
 	c.sendToOthers(p.NewMsgP(
 		p.ClientLeave,
@@ -128,11 +130,17 @@ func (c *Client) notifyClientLeave() {
 }
 
 func handleInitClient(conn net.Conn) {
+	// expecting init client msg in the next 5 secs
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+
 	msg, err := p.ReadMsg(conn)
 	if err != nil {
 		conn.Close()
-		panic(err)
+		fmt.Println("init client read err: ", err)
+		return
 	}
+
+	conn.SetReadDeadline(time.Time{})
 
 	// first msg should always be init client
 	if msg.Type != p.InitClient {
