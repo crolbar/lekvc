@@ -8,6 +8,8 @@
     devShells.${system}.default = pkgs.mkShell {
       packages = with pkgs; [
         miniaudio
+        speexdsp
+        pkg-config
       ];
       LD_LIBRARY_PATH = with pkgs; lib.makeLibraryPath [libpulseaudio];
     };

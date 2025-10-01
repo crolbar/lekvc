@@ -12,6 +12,7 @@ import (
 
 	"github.com/gen2brain/malgo"
 
+	"github.com/crolbar/lekvc/lekvc/speex"
 	p "github.com/crolbar/lekvc/lekvcs/protocol"
 )
 
@@ -54,20 +55,27 @@ var (
 
 	clients map[uint8]*Client = make(map[uint8]*Client)
 
-	noiseGateV float64 = -65
-
 	targetFramesize = 1200
 
 	// Simple accumulator for resampling capture input to consistent frame sizes
 	captureAccumulator   []float32 = make([]float32, 0, targetFramesize*2)
 	captureAccumulatorMu sync.Mutex
+
+	speexPreprocessor *speex.SpeexPreprocessor
 )
 
 func captureDevCb(pOutputSample, pInputSamples []byte, framecount uint32) {
 	samples := bytesToFloat32(pInputSamples)
 
-	clean := noiseGate(samples, noiseGateV)
-	applyLowPass(clean)
+	// run speex
+	var processed []float32
+	if speexPreprocessor != nil {
+		samples16 := float32ToInt16(samples)
+		_ = speexPreprocessor.Run(samples16)
+		processed = int16ToFloat32(samples16)
+	} else {
+		processed = samples
+	}
 
 	if ch == nil || conn == nil {
 		return
@@ -76,7 +84,7 @@ func captureDevCb(pOutputSample, pInputSamples []byte, framecount uint32) {
 	captureAccumulatorMu.Lock()
 	defer captureAccumulatorMu.Unlock()
 
-	captureAccumulator = append(captureAccumulator, clean...)
+	captureAccumulator = append(captureAccumulator, processed...)
 
 	// send frame only if we have enough samples
 	for len(captureAccumulator) >= targetFramesize {
@@ -136,7 +144,6 @@ func audioHandle(audioMsg *p.Msg) {
 		client.jitterBuffer.Add(samples)
 	}
 }
-
 
 func readerLoop() {
 	defer func() {
@@ -267,6 +274,18 @@ func main() {
 
 	defer captureDev.Uninit()
 	defer playbackDev.Uninit()
+
+	speexPreprocessor, err = speex.NewSpeexPreprocessor(targetFramesize, int(sampleRate))
+	if err != nil {
+		fmt.Printf("\x1b[33mWarning: Failed to init SpeexDSP: %v\x1b[m\n", err)
+		fmt.Println("\x1b[33mMake sure libspeexdsp is installed (apt install libspeexdsp-dev)\x1b[m")
+		speexPreprocessor = nil // Will run without preprocessing
+	}
+	defer func() {
+		if speexPreprocessor != nil {
+			speexPreprocessor.Destroy()
+		}
+	}()
 
 	captureDev.Start()
 	playbackDev.Start()

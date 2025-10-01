@@ -66,36 +66,6 @@ func float32ToBytes(f []float32) []byte {
 	return out
 }
 
-func noiseGate(samples []float32, thresholdDB float64) []float32 {
-	threshold := float32(1.0 * pow10(thresholdDB/20.0)) // convert dB to linear
-	output := make([]float32, len(samples))
-	for i, s := range samples {
-		if abs(s) < threshold {
-			output[i] = 0
-		} else {
-			output[i] = s
-		}
-	}
-	return output
-}
-
-func pow10(x float64) float64 {
-	return math.Pow(10, x)
-}
-
-func abs(x float32) float32 {
-	if x < 0 {
-		return -x
-	}
-	return x
-}
-
-func applyLowPass(samples []float32) {
-	for i := 1; i < len(samples)-1; i++ {
-		samples[i] = (samples[i-1] + samples[i] + samples[i+1]) / 3.0
-	}
-}
-
 func min(a, b time.Duration) time.Duration {
 	if a < b {
 		return a
@@ -115,4 +85,29 @@ func minInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// float32ToInt16 converts float32 samples (-1.0 to 1.0) to int16 samples
+func float32ToInt16(samples []float32) []int16 {
+	out := make([]int16, len(samples))
+	for i, s := range samples {
+		// Clamp to valid range
+		if s > 1.0 {
+			s = 1.0
+		} else if s < -1.0 {
+			s = -1.0
+		}
+		// Convert to int16 range (-32768 to 32767)
+		out[i] = int16(s * 32767.0)
+	}
+	return out
+}
+
+// int16ToFloat32 converts int16 samples to float32 samples (-1.0 to 1.0)
+func int16ToFloat32(samples []int16) []float32 {
+	out := make([]float32, len(samples))
+	for i, s := range samples {
+		out[i] = float32(s) / 32768.0
+	}
+	return out
 }

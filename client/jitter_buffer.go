@@ -132,4 +132,3 @@ func (jb *JitterBuffer) Conceal(targetSize int, lastSamples []float32) []float32
 
 	return concealed
 }
-
