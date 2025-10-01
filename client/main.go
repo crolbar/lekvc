@@ -8,8 +8,6 @@ import (
 	"net"
 	"os"
 	"runtime"
-	"strconv"
-	"strings"
 	"sync"
 
 	"github.com/gen2brain/malgo"
@@ -17,10 +15,16 @@ import (
 	p "github.com/crolbar/lekvc/lekvcs/protocol"
 )
 
-const bufferFrames = 0.1 * 48000 * 2
+const bufferFrames = 0.4 * 48000 * 2
+
+const Address = "localhost:9000"
 
 var (
+	id   uint8
+	name string
 	conn net.Conn
+
+	username string
 
 	captureDevIdx  = 0
 	playbackDevIdx = 0
@@ -28,14 +32,21 @@ var (
 	captureDevices  []malgo.DeviceInfo
 	playbackDevices []malgo.DeviceInfo
 
-	audioCh = make(chan []byte, 10)
-
 	format     = malgo.FormatF32
 	channels   = uint32(1)
 	sampleRate = uint32(48000)
 
+	malgoCtx    *malgo.AllocatedContext
+	playbackDev *malgo.Device
+	captureDev  *malgo.Device
+
+	ch            chan p.Msg
+	closeNotifyCH chan bool = make(chan bool, 1)
+
 	ring   = NewRingBuffer(bufferFrames * int(channels))
 	ringMu sync.Mutex
+
+	noiseGateV float64 = -70
 )
 
 func captureDevCb(pOutputSample, pInputSamples []byte, framecount uint32) {
@@ -43,9 +54,34 @@ func captureDevCb(pOutputSample, pInputSamples []byte, framecount uint32) {
 	// fmt.Println("send: ", size)
 
 	samples := bytesToFloat32(pInputSamples)
-	clean := noiseGate(samples, -70)
+	clean := noiseGate(samples, noiseGateV)
 	applyLowPass(clean)
-	conn.Write(float32ToBytes(clean))
+
+	// TODO: add noice cancel and other goodies
+
+	if ch == nil || conn == nil {
+		return
+	}
+
+	payload := float32ToBytes(clean)
+	payloadSize := len(payload)
+
+	if payloadSize > math.MaxUint16 {
+		panic("too big audio payload")
+	}
+
+	msg := p.Msg{
+		Type: p.Audio,
+		ID:   id,
+
+		PayloadSize: uint16(payloadSize),
+		Payload:     payload,
+
+		ClientName:     name,
+		ClientNameSize: uint16(len(name)),
+	}
+
+	ch <- msg
 }
 
 func playbackDevCb(pOutputSample, pInputSamples []byte, framecount uint32) {
@@ -67,43 +103,93 @@ func playbackDevCb(pOutputSample, pInputSamples []byte, framecount uint32) {
 	}
 }
 
-func audioHandle(audioBuf []byte, buf []byte, n int) {
-	audioBuf = append(audioBuf, buf[:n]...)
-
-	sampleCount := len(audioBuf) / 4
-
-	if sampleCount <= 0 {
-		return
-	}
-
-	samples := bytesToFloat32(audioBuf[:sampleCount*4])
+func audioHandle(audioMsg *p.Msg) {
+	samples := bytesToFloat32(audioMsg.Payload)
 
 	ringMu.Lock()
 	ring.Write(samples)
 	ringMu.Unlock()
-
-	audioBuf = audioBuf[sampleCount*4:]
-
 }
 
-func msgReader() {
-	var audioBuf []byte
-
-	var buf []byte = make([]byte, 4800)
+func readerLoop() {
+	defer func() {
+		conn.Close()
+		close(ch)
+		ch = nil
+	}()
 
 	for {
-		n, err := conn.Read(buf)
-
+		msg, err := p.ReadMsg(conn)
+		// assuming conn is closed
 		if err != nil {
-			panic(err)
+			fmt.Printf("\x1b[31merr: %s\x1b[m\n", err.Error())
+			break
 		}
 
-		if n == 0 {
-			continue
+		switch msg.Type {
+		case p.Audio:
+			audioHandle(msg)
+		case p.Text:
+		case p.ClientJoin:
+			fmt.Printf("\x1b[36m%s\x1b[m\n", string(msg.Payload))
+		case p.ClientLeave:
+			fmt.Printf("\x1b[38;5;124m%s\x1b[m\n", string(msg.Payload))
 		}
-
-		audioHandle(audioBuf, buf, n)
 	}
+}
+
+func writerLoop() {
+	for msg := range ch {
+		data, _ := p.EncodeMsg(msg)
+		conn.Write(data)
+	}
+	closeNotifyCH <- true
+}
+
+func InitClient(name string) (uint8, string) {
+	data, err := p.EncodeMsg(
+		p.NewMsgNP(p.InitClient, 0, name),
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	_, err = conn.Write(data)
+	if err != nil {
+		panic(err)
+	}
+
+	msg, err := p.ReadMsg(conn)
+	if err != nil {
+		panic(err)
+	}
+
+	if msg.Type != p.InitClient {
+		panic("wrong msg type recived on init client")
+	}
+
+	return msg.ID, msg.ClientName
+}
+
+func connect() error {
+	var err error
+
+	ch = make(chan p.Msg, 50)
+
+	conn, err = net.Dial("tcp", Address)
+	if err != nil {
+		close(ch)
+		return err
+	}
+
+	fmt.Printf("\x1b[32mConnected to crol.bar:9000\x1b[m\n\n")
+
+	id, name = InitClient(username)
+
+	go readerLoop()
+	go writerLoop()
+
+	return nil
 }
 
 func main() {
@@ -111,149 +197,43 @@ func main() {
 
 	if runtime.GOOS == "windows" {
 		enableANSI()
+		username = os.Getenv("USERNAME")
+	} else {
+		username = os.Getenv("USER")
 	}
 
-	conn, err = net.Dial("tcp", "localhost:9000")
+	malgoCtx, _ = malgo.InitContext(nil, malgo.ContextConfig{}, nil)
+	defer malgoCtx.Free()
+
+	err = SelectDevices(malgoCtx)
 	if err != nil {
 		panic(err)
 	}
 
-	fmt.Println("\x1b[32mConnected to crol.bar:9000\x1b[m\n")
-
-	ctx, _ := malgo.InitContext(nil, malgo.ContextConfig{}, nil)
-	defer ctx.Free()
-
-	data, err := p.EncodeMsg(p.Msg{
-		Type: p.InitClient,
-		ID:   0,
-
-		PayloadSize:    4,
-		Payload:        []byte("test"),
-		ClientNameSize: 5,
-		ClientName:     "jhony",
-	})
-	conn.Write(data)
-
-	return
-
-	err = PrintDevices(ctx)
+	captureDev, playbackDev, err = InitDevices()
 	if err != nil {
 		panic(err)
-	}
-
-	captureDevInfo := captureDevices[captureDevIdx]
-
-	var captureDev *malgo.Device
-
-	{
-		deviceConfig := malgo.DefaultDeviceConfig(malgo.Capture)
-		deviceConfig.Capture.DeviceID = captureDevInfo.ID.Pointer()
-		deviceConfig.Capture.Format = format
-		deviceConfig.Capture.Channels = channels
-		deviceConfig.SampleRate = sampleRate
-		deviceConfig.PUserData = nil
-
-		captureCallbacks := malgo.DeviceCallbacks{Data: captureDevCb}
-		captureDev, err = malgo.InitDevice(ctx.Context, deviceConfig, captureCallbacks)
 	}
 
 	defer captureDev.Uninit()
-
-	playbackDevInfo := playbackDevices[playbackDevIdx]
-	var playbackDev *malgo.Device
-
-	{
-		deviceConfig := malgo.DefaultDeviceConfig(malgo.Playback)
-		deviceConfig.Playback.DeviceID = playbackDevInfo.ID.Pointer()
-		deviceConfig.Playback.Format = format
-		deviceConfig.Playback.Channels = channels
-		deviceConfig.SampleRate = sampleRate
-		deviceConfig.PUserData = nil
-
-		captureCallbacks := malgo.DeviceCallbacks{Data: playbackDevCb}
-
-		playbackDev, err = malgo.InitDevice(ctx.Context, deviceConfig, captureCallbacks)
-	}
-
 	defer playbackDev.Uninit()
 
 	captureDev.Start()
 	playbackDev.Start()
 
-	go msgReader()
-
-	select {}
-
-	// 	go func() {
-	// 		scanner := bufio.NewScanner(conn)
-	// 		for scanner.Scan() {
-	// 			fmt.Println(">>", scanner.Text())
-	// 		}
-	// 	}()
-
-	// scanner := bufio.NewScanner(os.Stdin)
-	//
-	//	for scanner.Scan() {
-	//		fmt.Fprintln(conn, scanner.Text())
-	//	}
-}
-
-func PrintDevices(ctx *malgo.AllocatedContext) error {
-	var err error
-	captureDevices, err = ctx.Devices(malgo.Capture)
-	if err != nil {
-		return err
-	}
-
-	fmt.Println("\x1b[34m= Select mic =\x1b[m")
-	for i, d := range captureDevices {
-		fmt.Println(i, d.Name())
-	}
-
-	reader := bufio.NewReader(os.Stdin)
 	for {
-		fmt.Print("Enter device number: ")
-		input, _ := reader.ReadString('\n')
-		input = strings.TrimSpace(input)
-		idx, err := strconv.Atoi(input)
-		if err != nil || idx < 0 || idx >= len(captureDevices) {
-			fmt.Println("Invalid number, try again.")
-			continue
+		err = connect()
+		if err != nil {
+			fmt.Printf("\x1b[31merr: %s\x1b[m\n", err.Error())
+			closeNotifyCH <- true
 		}
-		captureDevIdx = idx
-		break
+
+		// wait utill conn is closed
+		<-closeNotifyCH
+
+		fmt.Printf("\x1b[33mConnection closed\x1b[m\n\n")
+
+		fmt.Println("\x1b[34m== Press \x1b[32mEnter\x1b[34m to try to reconnect ==\x1b[m")
+		bufio.NewReader(os.Stdin).ReadBytes('\n')
 	}
-
-	playbackDevices, err = ctx.Devices(malgo.Playback)
-	if err != nil {
-		return err
-	}
-
-	fmt.Println()
-
-	fmt.Println("\x1b[34m= Select Speaker =\x1b[m")
-	for i, d := range playbackDevices {
-		fmt.Println(i, d.Name())
-	}
-
-	reader = bufio.NewReader(os.Stdin)
-	for {
-		fmt.Print("Enter device number: ")
-		input, _ := reader.ReadString('\n')
-		input = strings.TrimSpace(input)
-		idx, err := strconv.Atoi(input)
-		if err != nil || idx < 0 || idx >= len(playbackDevices) {
-			fmt.Println("Invalid number, try again.")
-			continue
-		}
-		playbackDevIdx = idx
-		break
-	}
-
-	fmt.Println()
-
-	fmt.Printf("\x1b[33mUsing mic %s\x1b[m\n", captureDevices[captureDevIdx].Name())
-	fmt.Printf("\x1b[33mUsing speaker %s\x1b[m\n", playbackDevices[playbackDevIdx].Name())
-
-	return nil
 }

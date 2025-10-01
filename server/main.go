@@ -87,6 +87,7 @@ func (c *Client) readLoop() {
 
 		switch msg.Type {
 		case p.Audio:
+			// fmt.Println("recived audio from", msg.ClientName, c.conn.RemoteAddr())
 			c.handleRecivedAudio(msg.Payload)
 		case p.Text:
 			c.handleRecivedText(msg.Payload)
