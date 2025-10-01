@@ -9,6 +9,7 @@ import (
 	"os"
 	"runtime"
 	"sync"
+	"time"
 
 	"github.com/gen2brain/malgo"
 
@@ -18,6 +19,22 @@ import (
 const bufferFrames = 0.4 * 48000 * 2
 
 const Address = "localhost:9000"
+
+/*
+
+`ring` is main audio in which i put the sums
+
+`client.ring` is per client ring buffer
+for which i have a threshold or deadline i need to meet
+after which i sum all client rings into `ring`
+
+*/
+
+type Client struct {
+	id             uint8
+	samples        []float32
+	haveNewSamples bool
+}
 
 var (
 	id   uint8
@@ -46,7 +63,11 @@ var (
 	ring   = NewRingBuffer(bufferFrames * int(channels))
 	ringMu sync.Mutex
 
-	noiseGateV float64 = -70
+	clients map[uint8]*Client = make(map[uint8]*Client)
+
+	noiseGateV float64 = -65
+
+	targetFramesize = 1200
 )
 
 func captureDevCb(pOutputSample, pInputSamples []byte, framecount uint32) {
@@ -55,6 +76,7 @@ func captureDevCb(pOutputSample, pInputSamples []byte, framecount uint32) {
 
 	samples := bytesToFloat32(pInputSamples)
 	clean := noiseGate(samples, noiseGateV)
+	// clean := samples
 	applyLowPass(clean)
 
 	// TODO: add noice cancel and other goodies
@@ -105,10 +127,54 @@ func playbackDevCb(pOutputSample, pInputSamples []byte, framecount uint32) {
 
 func audioHandle(audioMsg *p.Msg) {
 	samples := bytesToFloat32(audioMsg.Payload)
+	(clients[audioMsg.ID]).samples = samples
+	(clients[audioMsg.ID]).haveNewSamples = true
+}
 
-	ringMu.Lock()
-	ring.Write(samples)
-	ringMu.Unlock()
+func mixer() {
+	// in ms
+	var frameTime float32 = (float32(targetFramesize) / float32(sampleRate)) * 1000
+	ticker := time.NewTicker(time.Millisecond * time.Duration(frameTime))
+	defer ticker.Stop()
+
+	for range ticker.C {
+		if len(clients) == 0 {
+			continue
+		}
+
+		summed := make([]float32, targetFramesize)
+		active := 0
+
+		for _, c := range clients {
+			if !c.haveNewSamples {
+				continue
+			}
+
+			for i, s := range c.samples {
+				summed[i] += s
+			}
+			c.haveNewSamples = false
+			active += 1
+		}
+
+		if active == 0 {
+			continue
+		}
+
+		for i := range summed {
+			summed[i] /= float32(active)
+
+			if summed[i] > 1 {
+				summed[i] = 1
+			} else if summed[i] < -1 {
+				summed[i] = -1
+			}
+		}
+
+		ringMu.Lock()
+		ring.Write(summed)
+		ringMu.Unlock()
+	}
 }
 
 func readerLoop() {
@@ -116,6 +182,7 @@ func readerLoop() {
 		conn.Close()
 		close(ch)
 		ch = nil
+		clear(clients)
 	}()
 
 	for {
@@ -126,6 +193,20 @@ func readerLoop() {
 			break
 		}
 
+		// CREATE CLIENT
+		{
+			// if the msg is not from us or we don't have the client registered
+			if _, ok := clients[msg.ID]; msg.ID != id && !ok {
+				clients[msg.ID] = &Client{
+					id:             msg.ID,
+					samples:        []float32{},
+					haveNewSamples: false,
+				}
+
+				fmt.Println("created client: ", msg.ID, clients)
+			}
+		}
+
 		switch msg.Type {
 		case p.Audio:
 			audioHandle(msg)
@@ -134,6 +215,11 @@ func readerLoop() {
 			fmt.Printf("\x1b[36m%s\x1b[m\n", string(msg.Payload))
 		case p.ClientLeave:
 			fmt.Printf("\x1b[38;5;124m%s\x1b[m\n", string(msg.Payload))
+
+			// REMOVE CLIENT
+			{
+				delete(clients, msg.ID)
+			}
 		}
 	}
 }
@@ -182,9 +268,9 @@ func connect() error {
 		return err
 	}
 
-	fmt.Printf("\x1b[32mConnected to crol.bar:9000\x1b[m\n\n")
-
 	id, name = InitClient(username)
+
+	fmt.Printf("\x1b[32mConnected to crol.bar:9000 as %s with id %d\x1b[m\n\n", name, id)
 
 	go readerLoop()
 	go writerLoop()
@@ -220,6 +306,8 @@ func main() {
 
 	captureDev.Start()
 	playbackDev.Start()
+
+	go mixer()
 
 	for {
 		err = connect()
