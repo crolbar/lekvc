@@ -3,7 +3,8 @@ package protocol
 import (
 	"bytes"
 	"encoding/binary"
-	// "net"
+	"errors"
+	"net"
 )
 
 type MsgType uint8
@@ -27,6 +28,9 @@ type Msg struct {
 	// use id = 0 for InitClient, used to get client id on client
 	ID uint8
 
+	// size of the next four fields
+	Size uint16
+
 	// optional in InitClient
 	PayloadSize uint16
 	Payload     []byte
@@ -46,6 +50,12 @@ func EncodeMsg(msg Msg) ([]byte, error) {
 
 	// ID
 	if err := binary.Write(buf, binary.LittleEndian, msg.ID); err != nil {
+		return nil, err
+	}
+
+	// MsgSize
+	size := 2 + msg.PayloadSize + 2 + msg.ClientNameSize
+	if err := binary.Write(buf, binary.LittleEndian, size); err != nil {
 		return nil, err
 	}
 
@@ -72,48 +82,58 @@ func EncodeMsg(msg Msg) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func GetPayloadSize(data []byte) uint16 {
-	return binary.LittleEndian.Uint16(data[1+1:])
-}
-
-func GetClientNameSize(data []byte, PayloadSize uint16) uint16 {
-	return binary.LittleEndian.Uint16(data[MsgHeaderSize+PayloadSize:])
-}
-
-func GetPayload(data []byte, PayloadSize uint16) []byte {
-	return data[MsgHeaderSize : MsgHeaderSize+PayloadSize]
-}
-
-func GetClientName(data []byte, PayloadSize uint16, ClientNameSize uint16) []byte {
-	return data[MsgHeaderSize+PayloadSize+2 : MsgHeaderSize+PayloadSize+2+ClientNameSize]
-}
-
-// func ReadFullMsg(conn net.Conn) ([]byte, error) {
-// 	kk
-// }
-
-func DecodeMsg(data []byte) (Msg, error) {
+func ReadMsg(conn net.Conn) (*Msg, error) {
 	var (
 		msg = Msg{}
 		off = 0
+
+		headerBuf = make([]byte, MsgHeaderSize)
+		msgBuf    []byte
 	)
 
-	msg.Type = MsgType(data[off])
+	// Read header
+	{
+		n, err := conn.Read(headerBuf)
+		if err != nil {
+			return nil, err
+		}
+		if n != MsgHeaderSize {
+			return nil, errors.New("Packet is not of HeaderSize lenght")
+		}
+	}
+
+	msg.Type = MsgType(headerBuf[off])
 	off += 1
 
-	msg.ID = data[off]
+	msg.ID = headerBuf[off]
 	off += 1
 
-	msg.PayloadSize = binary.LittleEndian.Uint16(data[off:])
+	msg.Size = binary.LittleEndian.Uint16(headerBuf[off:])
 	off += 2
 
-	msg.Payload = data[off : off+int(msg.PayloadSize)]
+	// Read the rest of the msg
+	{
+		msgBuf = make([]byte, msg.Size)
+		n, err := conn.Read(msgBuf)
+		if err != nil {
+			return nil, err
+		}
+		if n != int(msg.Size) {
+			return nil, errors.New("Packet has wrong msg.Size field or has no payload + clientName.")
+		}
+		off = 0
+	}
+
+	msg.PayloadSize = binary.LittleEndian.Uint16(msgBuf[off:])
+	off += 2
+
+	msg.Payload = msgBuf[off : off+int(msg.PayloadSize)]
 	off += int(msg.PayloadSize)
 
-	msg.ClientNameSize = binary.LittleEndian.Uint16(data[off:])
+	msg.ClientNameSize = binary.LittleEndian.Uint16(msgBuf[off:])
 	off += 2
 
-	msg.ClientName = string(data[off : off+int(msg.ClientNameSize)])
+	msg.ClientName = string(msgBuf[off : off+int(msg.ClientNameSize)])
 
-	return msg, nil
+	return &msg, nil
 }
