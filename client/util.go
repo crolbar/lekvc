@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/binary"
 	"math"
+	"time"
 )
 
 type RingBuffer struct {
@@ -93,4 +94,25 @@ func applyLowPass(samples []float32) {
 	for i := 1; i < len(samples)-1; i++ {
 		samples[i] = (samples[i-1] + samples[i] + samples[i+1]) / 3.0
 	}
+}
+
+func min(a, b time.Duration) time.Duration {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func max(a, b time.Duration) time.Duration {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

@@ -58,42 +58,56 @@ var (
 	noiseGateV float64 = -65
 
 	targetFramesize = 1200
+
+	// Simple accumulator for resampling capture input to consistent frame sizes
+	captureAccumulator   []float32 = make([]float32, 0, targetFramesize*2)
+	captureAccumulatorMu sync.Mutex
 )
 
 func captureDevCb(pOutputSample, pInputSamples []byte, framecount uint32) {
-	// size := int(framecount * uint32(channels))
-	// fmt.Println("send: ", size)
-
 	samples := bytesToFloat32(pInputSamples)
-	clean := noiseGate(samples, noiseGateV)
-	// clean := samples
-	applyLowPass(clean)
 
-	// TODO: add noice cancel and other goodies
+	clean := noiseGate(samples, noiseGateV)
+	applyLowPass(clean)
 
 	if ch == nil || conn == nil {
 		return
 	}
 
-	payload := float32ToBytes(clean)
-	payloadSize := len(payload)
+	captureAccumulatorMu.Lock()
+	defer captureAccumulatorMu.Unlock()
 
-	if payloadSize > math.MaxUint16 {
-		panic("too big audio payload")
+	captureAccumulator = append(captureAccumulator, clean...)
+
+	// send frame only if we have enough samples
+	for len(captureAccumulator) >= targetFramesize {
+		frame := make([]float32, targetFramesize)
+		copy(frame, captureAccumulator[:targetFramesize])
+
+		payload := float32ToBytes(frame)
+
+		msg := p.Msg{
+			Type:           p.Audio,
+			ID:             id,
+			PayloadSize:    uint16(len(payload)),
+			Payload:        payload,
+			ClientName:     name,
+			ClientNameSize: uint16(len(name)),
+		}
+
+		select {
+		case ch <- msg:
+		default:
+		}
+
+		// remove used samples
+		captureAccumulator = captureAccumulator[targetFramesize:]
 	}
 
-	msg := p.Msg{
-		Type: p.Audio,
-		ID:   id,
-
-		PayloadSize: uint16(payloadSize),
-		Payload:     payload,
-
-		ClientName:     name,
-		ClientNameSize: uint16(len(name)),
+	// Prevent accumulator from growing indefinitely (keep max 2x targetFramesize)
+	if len(captureAccumulator) > targetFramesize*2 {
+		captureAccumulator = captureAccumulator[len(captureAccumulator)-targetFramesize:]
 	}
-
-	ch <- msg
 }
 
 func playbackDevCb(pOutputSample, pInputSamples []byte, framecount uint32) {
@@ -204,6 +218,9 @@ func readerLoop() {
 		close(ch)
 		ch = nil
 		clear(clients)
+		captureAccumulatorMu.Lock()
+		captureAccumulator = captureAccumulator[:0]
+		captureAccumulatorMu.Unlock()
 	}()
 
 	for {
