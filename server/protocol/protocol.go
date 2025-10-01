@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"io"
 	"net"
 )
 
@@ -93,7 +94,7 @@ func ReadMsg(conn net.Conn) (*Msg, error) {
 
 	// Read header
 	{
-		n, err := conn.Read(headerBuf)
+		n, err := io.ReadFull(conn, headerBuf)
 		if err != nil {
 			return nil, err
 		}
@@ -114,7 +115,7 @@ func ReadMsg(conn net.Conn) (*Msg, error) {
 	// Read the rest of the msg
 	{
 		msgBuf = make([]byte, msg.Size)
-		n, err := conn.Read(msgBuf)
+		n, err := io.ReadFull(conn, msgBuf)
 		if err != nil {
 			return nil, err
 		}
