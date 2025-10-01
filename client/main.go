@@ -20,20 +20,10 @@ const bufferFrames = 0.4 * 48000 * 2
 
 const Address = "localhost:9000"
 
-/*
-
-`ring` is main audio in which i put the sums
-
-`client.ring` is per client ring buffer
-for which i have a threshold or deadline i need to meet
-after which i sum all client rings into `ring`
-
-*/
-
 type Client struct {
-	id             uint8
-	samples        []float32
-	haveNewSamples bool
+	id           uint8
+	jitterBuffer *JitterBuffer
+	lastSamples  []float32 // for packet loss concealment
 }
 
 var (
@@ -127,8 +117,11 @@ func playbackDevCb(pOutputSample, pInputSamples []byte, framecount uint32) {
 
 func audioHandle(audioMsg *p.Msg) {
 	samples := bytesToFloat32(audioMsg.Payload)
-	(clients[audioMsg.ID]).samples = samples
-	(clients[audioMsg.ID]).haveNewSamples = true
+	client := clients[audioMsg.ID]
+
+	if client != nil && client.jitterBuffer != nil {
+		client.jitterBuffer.Add(samples)
+	}
 }
 
 func mixer() {
@@ -146,24 +139,52 @@ func mixer() {
 		active := 0
 
 		for _, c := range clients {
-			if !c.haveNewSamples {
+			if c.jitterBuffer == nil {
 				continue
 			}
 
-			for i, s := range c.samples {
-				summed[i] += s
+			// Try to get samples from jitter buffer
+			samples := c.jitterBuffer.Get(targetFramesize)
+
+			// If no samples available, use packet loss concealment
+			if samples == nil {
+				samples = c.jitterBuffer.Conceal(targetFramesize, c.lastSamples)
+				// Don't count concealed packets as active to reduce their impact
+				if len(samples) > 0 {
+					// Mix in concealed audio at reduced level
+					for i := range samples {
+						if i < len(summed) {
+							summed[i] += samples[i] * 0.3 // reduce volume of concealed audio
+						}
+					}
+				}
+				continue
 			}
-			c.haveNewSamples = false
-			active += 1
+
+			// Store last valid samples for future concealment
+			if len(samples) > 0 {
+				c.lastSamples = make([]float32, len(samples))
+				copy(c.lastSamples, samples)
+			}
+
+			// Mix in the samples
+			for i, s := range samples {
+				if i < len(summed) {
+					summed[i] += s
+				}
+			}
+			active++
 		}
 
 		if active == 0 {
 			continue
 		}
 
+		// Normalize and apply soft clipping
 		for i := range summed {
 			summed[i] /= float32(active)
 
+			// Soft clipping to prevent harsh distortion
 			if summed[i] > 1 {
 				summed[i] = 1
 			} else if summed[i] < -1 {
@@ -198,9 +219,9 @@ func readerLoop() {
 			// if the msg is not from us or we don't have the client registered
 			if _, ok := clients[msg.ID]; msg.ID != id && !ok {
 				clients[msg.ID] = &Client{
-					id:             msg.ID,
-					samples:        []float32{},
-					haveNewSamples: false,
+					id:           msg.ID,
+					jitterBuffer: NewJitterBuffer(),
+					lastSamples:  make([]float32, 0),
 				}
 
 				fmt.Println("created client: ", msg.ID, clients)
