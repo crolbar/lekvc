@@ -133,23 +133,3 @@ func (jb *JitterBuffer) Conceal(targetSize int, lastSamples []float32) []float32
 	return concealed
 }
 
-func min(a, b time.Duration) time.Duration {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func max(a, b time.Duration) time.Duration {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
