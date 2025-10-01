@@ -21,6 +21,7 @@ jobs:
         with:
           go-version: '1.24.4'
 
+      # LINUX BUILD
       - name: Install speex
         if: runner.os == 'Linux'
         run: |
@@ -28,14 +29,41 @@ jobs:
           sudo apt-get install -y libspeexdsp-dev pkg-config
 
       - name: Build
+        if: runner.os == 'Linux'
         run: |
-           go build -C client -o lekvc-${{ matrix.os }}${{ matrix.os == 'windows-latest' && '.exe' || '' }}
+          go build -C client -o lekvc-${{ matrix.os }}
+
+
+      # WINDOWS "BUILD"
+      - name: Prepare headers and DLL on Windows
+        if: runner.os == 'Windows'
+        run: |
+          mkdir C:\speex
+          xcopy include C:\speex\include /E /I
+          copy lib\libspeexdsp.dll C:\speex\libspeexdsp.dll
+
+      - name: Build
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $env:CGO_CFLAGS = "-IC:\speex\include"
+          $env:CGO_LDFLAGS = "-LC:\speex -lspeexdsp"
+          go build -C client -o lekvc-windows.exe
+          copy C:\speex\libspeexdsp.dll client\libspeexdsp.dll
+
+      - name: Prepare Windows package
+        if: runner.os == 'Windows'
+        run: |
+          mkdir client\lekvc-${{ matrix.os }}
+          copy client\lekvc-windows.exe client\lekvc-${{ matrix.os }}\
+          copy client\libspeexdsp.dll client\lekvc-${{ matrix.os }}\
+
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: lekvc-${{ matrix.os }}${{ matrix.os == 'windows-latest' && '.exe' || '' }}
-          path: ./client/lekvc-${{ matrix.os }}${{ matrix.os == 'windows-latest' && '.exe' || '' }}
+          name: lekvc-${{ matrix.os }}
+          path: ./client/lekvc-${{ matrix.os }}
     
   release:
     needs: [ build ]

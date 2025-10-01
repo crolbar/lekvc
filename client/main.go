@@ -18,7 +18,7 @@ import (
 
 const bufferFrames = 0.4 * 48000 * 2
 
-const Address = "localhost:9000"
+const Address = "crol.bar:9000"
 
 type Client struct {
 	id           uint8
