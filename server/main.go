@@ -56,7 +56,7 @@ func (c *Client) handleRecivedAudio(samples []byte) {
 
 func (c *Client) handleRecivedText(text []byte) {
 	msg := p.NewMsg(
-		p.Audio,
+		p.Text,
 		c.id,
 		text,
 		c.name,

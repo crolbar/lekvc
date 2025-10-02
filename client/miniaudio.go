@@ -106,5 +106,7 @@ func SelectDevices(ctx *malgo.AllocatedContext) error {
 	fmt.Printf("\x1b[33mUsing mic %s\x1b[m\n", captureDevices[captureDevIdx].Name())
 	fmt.Printf("\x1b[33mUsing speaker %s\x1b[m\n", playbackDevices[playbackDevIdx].Name())
 
+	fmt.Println()
+
 	return nil
 }

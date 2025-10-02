@@ -2,8 +2,11 @@ package main
 
 import (
 	"encoding/binary"
+	"fmt"
 	"math"
 	"time"
+
+	p "github.com/crolbar/lekvc/lekvcs/protocol"
 )
 
 type RingBuffer struct {
@@ -115,4 +118,45 @@ func minInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func ChatPrintClient(text string) {
+	ChatPrint("\x1b[38;5;188mCLIENT\x1b[m", text)
+}
+
+func ChatPrintServer(text string) {
+	ChatPrint("\x1b[38;5;141mSERVER\x1b[m", text)
+}
+
+func Prompt() {
+	now := time.Now()
+	fmtTime := now.Format("15:04:05")
+	fmt.Printf("\x1b[38;5;238m[%s]\x1b[m => ", fmtTime)
+}
+
+func ChatPrint(sender string, text string) {
+	now := time.Now()
+	fmtTime := now.Format("15:04:05")
+	fmt.Printf("\r\x1b[38;5;238m[%s]\x1b[m %s => %s\n",
+		fmtTime,
+		sender,
+		text)
+
+	Prompt()
+}
+
+func generateClientColorFromID(id uint8) int {
+	return (int(id)*98+21)%255
+}
+
+func ChatPrintMsg(sender string, msg *p.Msg) {
+	now := time.Now()
+	fmtTime := now.Format("15:04:05")
+	fmt.Printf("\r\x1b[38;5;238m[%s]\x1b[38;5;%dm %s\x1b[m => %s\n",
+		fmtTime,
+		generateClientColorFromID(msg.ID),
+		sender,
+		string(msg.Payload))
+
+	Prompt()
 }

@@ -8,12 +8,13 @@ import (
 	"net"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 
 	"github.com/gen2brain/malgo"
 
-	p "github.com/crolbar/lekvc/lekvcs/protocol"
 	"github.com/crolbar/lekvc/lekvc/preprocessing"
+	p "github.com/crolbar/lekvc/lekvcs/protocol"
 )
 
 const bufferFrames = 0.4 * 48000 * 2
@@ -22,14 +23,16 @@ const Address = "crol.bar:9000"
 
 type Client struct {
 	id           uint8
+	name         string
 	jitterBuffer *JitterBuffer
 	lastSamples  []float32 // for packet loss concealment
 }
 
 var (
-	id   uint8
-	name string
-	conn net.Conn
+	id          uint8
+	name        string
+	conn        net.Conn
+	isConnected bool
 
 	username string
 
@@ -141,11 +144,43 @@ func audioHandle(audioMsg *p.Msg) {
 	}
 }
 
+func textCommandHandle(cmd string) {
+	for cstr, c := range commands {
+		if cmd == cstr {
+			c.f()
+		}
+	}
+	Prompt()
+}
+
+func stdinReaderLoop() {
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		if !isConnected {
+			break
+		}
+		text := scanner.Text()
+		if strings.HasPrefix(text, "/") {
+			textCommandHandle(text)
+			continue
+		}
+
+		if isConnected {
+			Prompt()
+		}
+		if len(text) == 0 {
+			continue
+		}
+		msg := p.NewMsg(p.Text, id, []byte(text), name)
+		ch <- msg
+	}
+}
 
 func readerLoop() {
 	defer func() {
 		conn.Close()
 		close(ch)
+		isConnected = false
 		ch = nil
 		clear(clients)
 		captureAccumulatorMu.Lock()
@@ -161,7 +196,7 @@ func readerLoop() {
 		msg, err := p.ReadMsg(conn)
 		// assuming conn is closed
 		if err != nil {
-			fmt.Printf("\x1b[31merr: %s\x1b[m\n", err.Error())
+			ChatPrintClient(fmt.Sprintf("\x1b[31merr: %s\x1b[m", err.Error()))
 			break
 		}
 
@@ -171,11 +206,10 @@ func readerLoop() {
 			if _, ok := clients[msg.ID]; msg.ID != id && !ok {
 				clients[msg.ID] = &Client{
 					id:           msg.ID,
+					name:         msg.ClientName,
 					jitterBuffer: NewJitterBuffer(),
 					lastSamples:  make([]float32, 0),
 				}
-
-				fmt.Println("created client: ", msg.ID, clients)
 			}
 		}
 
@@ -183,10 +217,18 @@ func readerLoop() {
 		case p.Audio:
 			audioHandle(msg)
 		case p.Text:
+			var sender string
+			if msg.ID != id {
+				sender = msg.ClientName
+			} else {
+				// server is sending msg back with our id, server telling us something
+				sender = "SERVER"
+			}
+			ChatPrintMsg(sender, msg)
 		case p.ClientJoin:
-			fmt.Printf("\x1b[36m%s\x1b[m\n", string(msg.Payload))
+			ChatPrintServer(fmt.Sprintf("\x1b[34m%s\x1b[m", string(msg.Payload)))
 		case p.ClientLeave:
-			fmt.Printf("\x1b[38;5;124m%s\x1b[m\n", string(msg.Payload))
+			ChatPrintServer(fmt.Sprintf("\x1b[38;5;124m%s\x1b[m", string(msg.Payload)))
 
 			// REMOVE CLIENT
 			{
@@ -242,7 +284,7 @@ func connect() error {
 
 	id, name = InitClient(username)
 
-	fmt.Printf("\x1b[32mConnected to crol.bar:9000 as %s with id %d\x1b[m\n\n", name, id)
+	ChatPrintClient(fmt.Sprintf("\x1b[32mConnected to crol.bar:9000 as %s with id %d\x1b[m", name, id))
 
 	go readerLoop()
 	go writerLoop()
@@ -259,6 +301,8 @@ func main() {
 	} else {
 		username = os.Getenv("USER")
 	}
+
+	InitCommands()
 
 	malgoCtx, _ = malgo.InitContext(nil, malgo.ContextConfig{}, nil)
 	defer malgoCtx.Free()
@@ -282,18 +326,23 @@ func main() {
 	go mixer()
 
 	for {
+		go stdinReaderLoop()
 		err = connect()
 		if err != nil {
-			fmt.Printf("\x1b[31merr: %s\x1b[m\n", err.Error())
+			ChatPrintClient(fmt.Sprintf("\x1b[31merr: %s\x1b[m", err.Error()))
 			closeNotifyCH <- true
 		}
+
+		isConnected = true
 
 		// wait utill conn is closed
 		<-closeNotifyCH
 
-		fmt.Printf("\x1b[33mConnection closed\x1b[m\n\n")
+		isConnected = false
 
-		fmt.Println("\x1b[34m== Press \x1b[32mEnter\x1b[34m to try to reconnect ==\x1b[m")
+		ChatPrintServer("\x1b[33mConnection closed\x1b[m\n")
+
+		fmt.Println("\r\x1b[34m== Press \x1b[32mEnter\x1b[34m twice to try to reconnect ==\x1b[m")
 		bufio.NewReader(os.Stdin).ReadBytes('\n')
 	}
 }
