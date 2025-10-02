@@ -13,11 +13,12 @@ import (
 	"github.com/gen2brain/malgo"
 
 	p "github.com/crolbar/lekvc/lekvcs/protocol"
+	"github.com/crolbar/lekvc/lekvc/preprocessing"
 )
 
 const bufferFrames = 0.4 * 48000 * 2
 
-const Address = "localhost:9000"
+const Address = "crol.bar:9000"
 
 type Client struct {
 	id           uint8
@@ -54,20 +55,23 @@ var (
 
 	clients map[uint8]*Client = make(map[uint8]*Client)
 
-	noiseGateV float64 = -65
-
 	targetFramesize = 1200
 
 	// Simple accumulator for resampling capture input to consistent frame sizes
 	captureAccumulator   []float32 = make([]float32, 0, targetFramesize*2)
 	captureAccumulatorMu sync.Mutex
+
+	// Audio preprocessing
+	audioProcessor *preprocessing.AudioProcessor = preprocessing.NewAudioProcessor(int(sampleRate))
 )
 
 func captureDevCb(pOutputSample, pInputSamples []byte, framecount uint32) {
 	samples := bytesToFloat32(pInputSamples)
 
-	clean := noiseGate(samples, noiseGateV)
-	applyLowPass(clean)
+	// Apply professional audio preprocessing
+	if audioProcessor != nil {
+		samples = audioProcessor.Process(samples)
+	}
 
 	if ch == nil || conn == nil {
 		return
@@ -76,7 +80,7 @@ func captureDevCb(pOutputSample, pInputSamples []byte, framecount uint32) {
 	captureAccumulatorMu.Lock()
 	defer captureAccumulatorMu.Unlock()
 
-	captureAccumulator = append(captureAccumulator, clean...)
+	captureAccumulator = append(captureAccumulator, samples...)
 
 	// send frame only if we have enough samples
 	for len(captureAccumulator) >= targetFramesize {
@@ -147,6 +151,10 @@ func readerLoop() {
 		captureAccumulatorMu.Lock()
 		captureAccumulator = captureAccumulator[:0]
 		captureAccumulatorMu.Unlock()
+		// Reset audio processor state
+		if audioProcessor != nil {
+			audioProcessor.Reset()
+		}
 	}()
 
 	for {
