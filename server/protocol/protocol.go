@@ -112,6 +112,10 @@ func ReadMsg(conn net.Conn) (*Msg, error) {
 	msg.Size = binary.LittleEndian.Uint16(headerBuf[off:])
 	off += 2
 
+	if msg.Size == 0 {
+		return nil, errors.New("invalid msg.Size = 0")
+	}
+
 	// Read the rest of the msg
 	{
 		msgBuf = make([]byte, msg.Size)
@@ -123,6 +127,13 @@ func ReadMsg(conn net.Conn) (*Msg, error) {
 			return nil, errors.New("Packet has wrong msg.Size field or has no payload + clientName.")
 		}
 		off = 0
+
+		if len(msgBuf) == 0 || len(msgBuf) < int(msg.Size) {
+			n := "buggedmf"
+			msg.ClientName = n
+			msg.ClientNameSize = uint16(len(n))
+			return &msg, nil
+		}
 	}
 
 	msg.PayloadSize = binary.LittleEndian.Uint16(msgBuf[off:])
