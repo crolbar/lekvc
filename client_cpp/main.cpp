@@ -41,16 +41,24 @@ initializeWebRTCApm()
 {
     webrtc::AudioProcessing::Config config;
 
-    // Enable noise suppression
+    // Noise Suppression - Maximum level for cleanest audio
     config.noise_suppression.enabled = true;
     config.noise_suppression.level =
-      webrtc::AudioProcessing::Config::NoiseSuppression::kHigh;
+      webrtc::AudioProcessing::Config::NoiseSuppression::kVeryHigh;
 
-    // Disable other features for now (you can enable them later)
-    config.echo_canceller.enabled = false;
-    config.gain_controller1.enabled = false;
-    config.gain_controller2.enabled = false;
-    config.high_pass_filter.enabled = true; // Usually good to keep enabled
+    // Echo Cancellation - Removes echo/feedback
+    config.echo_canceller.enabled = true;
+    config.echo_canceller.mobile_mode = false; // Desktop mode for better quality
+
+    // Automatic Gain Control v2 - Keeps volume consistent
+    config.gain_controller2.enabled = true;
+    config.gain_controller2.fixed_digital.gain_db = 0.0f;
+
+    // High-pass filter - Removes low-frequency rumble
+    config.high_pass_filter.enabled = true;
+
+    // Transient suppression - Reduces click/pop sounds
+    config.transient_suppression.enabled = true;
 
     // Create APM instance
     g_apm = webrtc::AudioProcessingBuilder().Create();
@@ -62,12 +70,19 @@ initializeWebRTCApm()
     // Apply configuration
     g_apm->ApplyConfig(config);
 
+    // Enable voice detection (set via method, not config)
+    g_apm->set_stream_delay_ms(0);
+    g_apm->set_stream_key_pressed(false);
+
     // Set stream formats
     webrtc::StreamConfig stream_config(SAMPLE_RATE, CHANNELS);
 
-    printf("WebRTC APM initialized successfully\n");
-    printf("  Noise Suppression: High\n");
-    printf("  High-pass filter: Enabled\n");
+    printf("WebRTC APM initialized with full processing:\n");
+    printf("  ✓ Noise Suppression: Very High\n");
+    printf("  ✓ Echo Cancellation: Desktop Mode\n");
+    printf("  ✓ Automatic Gain Control v2\n");
+    printf("  ✓ High-pass Filter\n");
+    printf("  ✓ Transient Suppression\n");
 
     return true;
 }
@@ -178,16 +193,6 @@ captureCallback(ma_device* pDevice,
                 const void* pInput,
                 ma_uint32 frameCount)
 {
-    // (void)pDevice;
-    // (void)pOutput;
-
-    // const float* inputSamples = static_cast<const float*>(pInput);
-
-    // // Write captured audio to ring buffer
-    // ringBufferWrite(inputSamples, frameCount * CHANNELS);
-
-    // return;
-
     (void)pDevice;
     (void)pOutput;
 
@@ -239,11 +244,33 @@ playbackCallback(ma_device* pDevice,
     (void)pInput;
 
     float* outputSamples = static_cast<float*>(pOutput);
+    size_t totalSamples = frameCount * CHANNELS;
 
     // Read from ring buffer to playback
-    ringBufferRead(outputSamples, frameCount * CHANNELS);
+    ringBufferRead(outputSamples, totalSamples);
 
-    // TODO: Add playback processing here if needed
+    // Feed playback audio to APM for echo cancellation
+    // This tells the AEC what sound is going to the speakers
+    if (g_apm) {
+        // Convert F32 to S16 for APM
+        std::vector<int16_t> int16Samples(totalSamples);
+        floatToInt16(outputSamples, int16Samples.data(), totalSamples);
+
+        // Process reverse stream (playback) for echo reference
+        webrtc::StreamConfig stream_config(SAMPLE_RATE, CHANNELS);
+        
+        // Feed in chunks of 480 samples (10ms frames)
+        size_t offset = 0;
+        while (offset + APM_FRAME_SIZE <= totalSamples) {
+            g_apm->ProcessReverseStream(
+                int16Samples.data() + offset,
+                stream_config,
+                stream_config,
+                int16Samples.data() + offset
+            );
+            offset += APM_FRAME_SIZE;
+        }
+    }
 }
 
 void
