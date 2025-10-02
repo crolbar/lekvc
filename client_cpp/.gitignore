@@ -1,0 +1,10 @@
+build/
+*.o
+*.so
+*.a
+lekvc_client
+compile_commands.json
+.cache/
+.vscode/
+.idea/
+
