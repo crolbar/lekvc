@@ -112,6 +112,10 @@ func ReadMsg(conn net.Conn) (*Msg, error) {
 	msg.Size = binary.LittleEndian.Uint16(headerBuf[off:])
 	off += 2
 
+	if msg.Size == 0 {
+		return nil, errors.New("invalid msg.Size = 0")
+	}
+
 	// Read the rest of the msg
 	{
 		msgBuf = make([]byte, msg.Size)
