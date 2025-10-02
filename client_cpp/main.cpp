@@ -1,7 +1,7 @@
 #define MINIAUDIO_IMPLEMENTATION
 #include "miniaudio.h"
 
-#include <modules/audio_processing/include/audio_processing.h>
+#include <webrtc/modules/audio_processing/include/audio_processing.h>
 
 #include <algorithm>
 #include <atomic>
@@ -48,7 +48,8 @@ initializeWebRTCApm()
 
     // Echo Cancellation - Removes echo/feedback
     config.echo_canceller.enabled = true;
-    config.echo_canceller.mobile_mode = false; // Desktop mode for better quality
+    config.echo_canceller.mobile_mode =
+      false; // Desktop mode for better quality
 
     // Automatic Gain Control v2 - Keeps volume consistent
     config.gain_controller2.enabled = true;
@@ -258,16 +259,14 @@ playbackCallback(ma_device* pDevice,
 
         // Process reverse stream (playback) for echo reference
         webrtc::StreamConfig stream_config(SAMPLE_RATE, CHANNELS);
-        
+
         // Feed in chunks of 480 samples (10ms frames)
         size_t offset = 0;
         while (offset + APM_FRAME_SIZE <= totalSamples) {
-            g_apm->ProcessReverseStream(
-                int16Samples.data() + offset,
-                stream_config,
-                stream_config,
-                int16Samples.data() + offset
-            );
+            g_apm->ProcessReverseStream(int16Samples.data() + offset,
+                                        stream_config,
+                                        stream_config,
+                                        int16Samples.data() + offset);
             offset += APM_FRAME_SIZE;
         }
     }

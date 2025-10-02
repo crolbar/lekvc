@@ -8,28 +8,83 @@ jobs:
   build:
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest]
-        goarch: [amd64]
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            artifact_name: lekvc-linux
+            cmake_args: "-DCMAKE_BUILD_TYPE=Release"
+          - os: windows-latest
+            platform: windows
+            artifact_name: lekvc-windows.exe
+            cmake_args: "-DCMAKE_BUILD_TYPE=Release -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded"
     runs-on: ${{ matrix.os }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v4
-        with:
-          go-version: '1.24.4'
-
-      - name: Build
+      - name: Install dependencies (Linux)
+        if: matrix.platform == 'linux'
         run: |
-           go build -C client -o lekvc-${{ matrix.os }}${{ matrix.os == 'windows-latest' && '.exe' || '' }}
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            pkg-config \
+            libwebrtc-audio-processing-dev \
+            libasound2-dev \
+            libpulse-dev
+
+      - name: Install dependencies (Windows)
+        if: matrix.platform == 'windows'
+        run: |
+          # Build WebRTC Audio Processing from source using CMake
+          git clone --recursive https://github.com/jiemojiemo/webrtc-audio-processing-cmake.git C:\webrtc-apm
+          cd C:\webrtc-apm
+          
+          # Initialize submodules if not already done
+          git submodule update --init --recursive
+          
+          mkdir build
+          cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=C:\webrtc-apm-install -DBUILD_SHARED_LIBS=OFF
+          cmake --build . --config Release
+          cmake --install . --config Release
+          
+          # Set environment variables for CMake to find the library
+          echo "CMAKE_PREFIX_PATH=C:\webrtc-apm-install" >> $env:GITHUB_ENV
+
+      - name: Build C++ Client (Linux)
+        if: matrix.platform == 'linux'
+        run: |
+          cd client_cpp
+          mkdir -p build
+          cd build
+          cmake .. ${{ matrix.cmake_args }}
+          cmake --build . --config Release --parallel
+          # Verify the executable was created
+          ls -la lekvc_client
+          cp lekvc_client ../lekvc-linux
+          # Make it executable
+          chmod +x ../lekvc-linux
+
+      - name: Build C++ Client (Windows)
+        if: matrix.platform == 'windows'
+        run: |
+          cd client_cpp
+          mkdir build
+          cd build
+          cmake .. ${{ matrix.cmake_args }} -DCMAKE_PREFIX_PATH=$env:CMAKE_PREFIX_PATH
+          cmake --build . --config Release --parallel
+          # Verify the executable was created
+          dir Release\lekvc_client.exe
+          copy Release\lekvc_client.exe ..\lekvc-windows.exe
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: lekvc-${{ matrix.os }}${{ matrix.os == 'windows-latest' && '.exe' || '' }}
-          path: ./client/lekvc-${{ matrix.os }}${{ matrix.os == 'windows-latest' && '.exe' || '' }}
+          name: ${{ matrix.artifact_name }}
+          path: ./client_cpp/${{ matrix.artifact_name }}
     
   release:
     needs: [ build ]
